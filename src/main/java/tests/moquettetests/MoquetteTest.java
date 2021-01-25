@@ -15,7 +15,6 @@ import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -48,12 +47,14 @@ public class MoquetteTest {
     private static final String TOPIC_POSTFIX = ""; //?$select=result,phenomenonTime";
     private static final long CLIENT_LIVE_MILLIS = 2000;
     private static final long CLIENT_DOWN_MILLIS = 100;
+    private static final long PUBLISHER_SLEEP_MILLIS = 100;
+    private static final long TOPIC_COUNT = 20000;
 
     private Server broker;
     private MqttClient client;
     private final String clientId = "TestClient (" + UUID.randomUUID() + ")";
     private final int maxInFlight = 9999;
-    private final int threadCountPublish = 10;
+    private final int threadCountPublish = 1;
     private final int threadCountListen = 1;
     /**
      * The number of milliseconds a worker is allowed to not work before we
@@ -63,7 +64,7 @@ public class MoquetteTest {
 
     private List<Publisher> publishers = new ArrayList<>();
     private List<Listener> listeners = new ArrayList<>();
-    private List<String> topicList = new CopyOnWriteArrayList<>();
+    private List<String> topicList = new ArrayList<>();
 
     private BlockingQueue<String> messageQueue;
     private ExecutorService executorService;
@@ -97,12 +98,24 @@ public class MoquetteTest {
 
         @Override
         public void run() {
+            LOGGER.info("Publishing on: {}", topic);
             while (!stop) {
                 String message = "Last: " + lastMessage + MoquetteTest.MESSAGE;
                 try {
-                    client.publish(topic, message.getBytes(UTF8), 0, false);
+                    if (client.isConnected()) {
+                        client.publish(topic, message.getBytes(UTF8), 0, false);
+                    } else {
+                        return;
+                    }
                 } catch (MqttException ex) {
                     LOGGER.error("Failed to send message.", ex);
+                }
+                if (PUBLISHER_SLEEP_MILLIS > 0) {
+                    try {
+                        Thread.sleep(PUBLISHER_SLEEP_MILLIS);
+                    } catch (InterruptedException ex) {
+                        LOGGER.error("Interrupted.", ex);
+                    }
                 }
                 lastMessage = System.currentTimeMillis();
             }
@@ -156,6 +169,7 @@ public class MoquetteTest {
 
         @Override
         public void run() {
+            LOGGER.info("Listening on {} topics", topics.length);
             while (!stop) {
                 try {
                     client.connect();
@@ -223,9 +237,7 @@ public class MoquetteTest {
             stopPublishers();
         }
         for (int i = 0; i < threadCountPublish; i++) {
-            String topic = TOPIC_PREFIX + "Client-" + i + TOPIC_POSTFIX;
-            Publisher worker = new Publisher(client, topic);
-            topicList.add(topic);
+            Publisher worker = new Publisher(client, topicList.get(i));
             publishers.add(worker);
             LOGGER.info("Created worker {}.", worker.getTopic());
         }
@@ -252,7 +264,7 @@ public class MoquetteTest {
                 LOGGER.info("Failed to cancel checker task.");
             }
         }
-        checker = executor.scheduleAtFixedRate(this::checkWorkers, 100, 100, TimeUnit.MILLISECONDS);
+        checker = executor.scheduleAtFixedRate(this::checkWorkers, 500, 500, TimeUnit.MILLISECONDS);
     }
 
     public void startListeners() {
@@ -340,26 +352,34 @@ public class MoquetteTest {
         LOGGER.info("Stopped checker. {} tasks still running.", shutdownNow.size());
     }
 
-    /**
-     * @param args the command line arguments
-     * @throws java.io.UnsupportedEncodingException
-     */
-    public static void main(String[] args) throws UnsupportedEncodingException, IOException, MqttException {
-        MoquetteTest pahoTest = new MoquetteTest();
-        pahoTest.startServer();
-        pahoTest.createPublisers();
-        pahoTest.createListeners();
-        pahoTest.startWorkers();
-        pahoTest.startListeners();
+    public void work() throws UnsupportedEncodingException, IOException, MqttException {
+        for (int i = 0; i < TOPIC_COUNT; i++) {
+            topicList.add(TOPIC_PREFIX + "Client-" + i + TOPIC_POSTFIX);
+        }
+        startServer();
+        createPublisers();
+        createListeners();
+        startWorkers();
+        startListeners();
 
         try (BufferedReader input = new BufferedReader(new InputStreamReader(System.in, "UTF-8"))) {
             LOGGER.warn("Press Enter to exit.");
             input.read();
             LOGGER.warn("Exiting...");
-            pahoTest.stopListeners();
-            pahoTest.stopPublishers();
-            pahoTest.stopServer();
+            stopListeners();
+            stopPublishers();
+            stopServer();
         }
+    }
+
+    /**
+     * @param args the command line arguments
+     * @throws java.io.UnsupportedEncodingException
+     * @throws org.eclipse.paho.client.mqttv3.MqttException
+     */
+    public static void main(String[] args) throws UnsupportedEncodingException, IOException, MqttException {
+        MoquetteTest pahoTest = new MoquetteTest();
+        pahoTest.work();
     }
 
 }

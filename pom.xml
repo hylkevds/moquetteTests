@@ -20,6 +20,13 @@
                 <enabled>false</enabled>
             </snapshots>
         </repository>
+        <repository>
+            <id>bintray-fraunhoferiosb-Maven</id>
+            <url>https://dl.bintray.com/fraunhoferiosb/Maven</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
     </repositories>
 
     <dependencies>
@@ -31,12 +38,12 @@
         <dependency>
             <groupId>org.eclipse.paho</groupId>
             <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
-            <version>1.2.4</version>
+            <version>1.2.5</version>
         </dependency>
         <dependency>
             <groupId>io.moquette</groupId>
             <artifactId>moquette-broker</artifactId>
-            <version>0.13</version>
+            <version>0.14</version>
             <exclusions>
                 <exclusion>
                     <groupId>org.slf4j</groupId>
