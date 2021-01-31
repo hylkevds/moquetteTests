@@ -9,23 +9,16 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
-import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-import org.eclipse.paho.client.mqttv3.MqttClient;
-import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
-import org.eclipse.paho.client.mqttv3.MqttMessage;
-import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,34 +33,61 @@ public class MoquetteTest {
     /**
      * The logger for this class.
      */
-    private static final Logger LOGGER = LoggerFactory.getLogger(MoquetteTest.class);
-    private static final int QOS = 2;
-    private static final String BROKER_URL = "tcp://localhost:1883";
-    private static final String TOPIC_PREFIX = ""; //some/deep(er)/path/";
-    private static final String TOPIC_POSTFIX = ""; //?$select=result,phenomenonTime";
-    private static final long CLIENT_LIVE_MILLIS = 2000;
-    private static final long CLIENT_DOWN_MILLIS = 100;
-    private static final long PUBLISHER_SLEEP_MILLIS = 100;
-    private static final long TOPIC_COUNT = 20000;
+    public static final Logger LOGGER = LoggerFactory.getLogger(MoquetteTest.class);
+    public static final int QOS_LISTEN = 1;
+    public static final int QOS_PUBLISH = 2;
+    public static final String BROKER_URL = "tcp://127.0.0.1:1883";
+    public static final String TOPIC_PREFIX = "Datastreams(";
+    public static final String TOPIC_POSTFIX = ")/Observations";
+
+    /**
+     * Clients connect, subscript, listen for this long, then unsubscribe.
+     */
+    public static final long CLIENT_LIVE_MILLIS = 60 * 60 * 1000;
+    /**
+     * After unsubscribing, clients sleep for this long, and start over.
+     */
+    public static final long CLIENT_DOWN_MILLIS = 1;
+
+    /**
+     * Publish directly using moquette internal API?
+     */
+    public static final boolean PUBLISH_DIRECT = true;
+    /**
+     * Publish this many messages in one go.
+     */
+    public static final long PUBLISHER_BATCH_COUNT = 100;
+    /**
+     * Then sleep for this long.
+     */
+    public static final long PUBLISHER_SLEEP_MILLIS = 1_000;
+
+    /**
+     * How long to wait before the start the publishers.
+     */
+    public static final long PUBLISHER_START_DELAY_MILLIS = 1_000;
+    /**
+     * How long to wait before the start of the next publisher.
+     */
+    public static final long PUBLISHER_RAMP_UP_DELAY_MILLIS = 1;
+
+    public static final int MAX_IN_FLIGHT = 9999;
+    public static final long TOPIC_COUNT = 20;
+    public static final int H2_AUTO_SAVE_INTERVAL = 1;
 
     private Server broker;
-    private MqttClient client;
-    private final String clientId = "TestClient (" + UUID.randomUUID() + ")";
-    private final int maxInFlight = 9999;
     private final int threadCountPublish = 1;
     private final int threadCountListen = 1;
+
     /**
      * The number of milliseconds a worker is allowed to not work before we
      * complain.
      */
-    private final long cutoff = 200;
+    private final long cutoff = PUBLISHER_SLEEP_MILLIS + 100;
 
-    private List<Publisher> publishers = new ArrayList<>();
-    private List<Listener> listeners = new ArrayList<>();
-    private List<String> topicList = new ArrayList<>();
-
-    private BlockingQueue<String> messageQueue;
-    private ExecutorService executorService;
+    private final List<Publisher> publishers = new ArrayList<>();
+    private final List<Listener> listeners = new ArrayList<>();
+    private final List<String> topicList = new ArrayList<>();
 
     private ScheduledExecutorService executor;
     private ScheduledFuture<?> checker;
@@ -75,141 +95,7 @@ public class MoquetteTest {
 
     public static final String MESSAGE = "test";
 
-    private static class Publisher implements Runnable {
-
-        /**
-         * The time the last message was sent. No need for synchronisation,
-         * precision is not important.
-         */
-        private long lastMessage = 0;
-        private boolean stop = false;
-        private final MqttClient client;
-        private final String topic;
-        /**
-         * Flag to indicate we think it is working, so we don't keep complaining
-         * about the same worker.
-         */
-        private boolean working = true;
-
-        public Publisher(MqttClient client, String topic) {
-            this.client = client;
-            this.topic = topic;
-        }
-
-        @Override
-        public void run() {
-            LOGGER.info("Publishing on: {}", topic);
-            while (!stop) {
-                String message = "Last: " + lastMessage + MoquetteTest.MESSAGE;
-                try {
-                    if (client.isConnected()) {
-                        client.publish(topic, message.getBytes(UTF8), 0, false);
-                    } else {
-                        return;
-                    }
-                } catch (MqttException ex) {
-                    LOGGER.error("Failed to send message.", ex);
-                }
-                if (PUBLISHER_SLEEP_MILLIS > 0) {
-                    try {
-                        Thread.sleep(PUBLISHER_SLEEP_MILLIS);
-                    } catch (InterruptedException ex) {
-                        LOGGER.error("Interrupted.", ex);
-                    }
-                }
-                lastMessage = System.currentTimeMillis();
-            }
-        }
-
-        public void stop() {
-            stop = true;
-        }
-
-        public long getLastMessage() {
-            return lastMessage;
-        }
-
-        public String getTopic() {
-            return topic;
-        }
-
-        public boolean isWorking() {
-            return working;
-        }
-
-        public void setWorking(boolean working) {
-            this.working = working;
-        }
-
-    }
-
-    private static class Listener implements Runnable {
-
-        private final String clientId;
-        private final String[] topics;
-
-        private final MqttClient client;
-        private final AtomicLong recvCount = new AtomicLong();
-        private boolean stop = false;
-
-        public Listener(String serverUrl, String clientId, String[] topics) throws MqttException {
-            this.clientId = clientId;
-            this.topics = topics;
-            this.client = new MqttClient(serverUrl, clientId);
-
-        }
-
-        public void stop() {
-            stop = true;
-        }
-
-        public long getRecvCount() {
-            return recvCount.get();
-        }
-
-        @Override
-        public void run() {
-            LOGGER.info("Listening on {} topics", topics.length);
-            while (!stop) {
-                try {
-                    client.connect();
-                    for (String topic : topics) {
-                        client.subscribe(topic, QOS,
-                                (String msgTopic, MqttMessage message) -> {
-                                    recvCount.incrementAndGet();
-                                    LOGGER.trace("{} Received message on {}", clientId, msgTopic);
-                                }
-                        );
-                    }
-                    sleep(CLIENT_LIVE_MILLIS);
-                    client.unsubscribe(topics);
-                    client.disconnect();
-                    sleep(CLIENT_DOWN_MILLIS);
-                } catch (MqttException ex) {
-                    LOGGER.error("Client Failed", ex);
-                }
-            }
-        }
-
-        private void sleep(long millis) {
-            try {
-                Thread.sleep(millis);
-            } catch (InterruptedException ex) {
-            }
-        }
-    }
-
     public MoquetteTest() {
-        messageQueue = new ArrayBlockingQueue<>(1000);
-        executorService = ProcessorHelper.createProcessors(10, messageQueue, m -> sendMessage(m), "MessageSender");
-    }
-
-    public void sendMessage(String message) {
-        try {
-            client.publish("test", message.getBytes(UTF8), QOS, false);
-        } catch (MqttException ex) {
-            LOGGER.error("Failed to send message.", ex);
-        }
     }
 
     public void stopPublishers() {
@@ -232,12 +118,18 @@ public class MoquetteTest {
         listeners.clear();
     }
 
-    public void createPublisers() {
+    public void createPublisers() throws MqttException {
         if (!publishers.isEmpty()) {
             stopPublishers();
         }
         for (int i = 0; i < threadCountPublish; i++) {
-            Publisher worker = new Publisher(client, topicList.get(i));
+            String publisherId = "Publisher-" + i;
+            Publisher worker;
+            if (PUBLISH_DIRECT) {
+                worker = new Publisher(broker, publisherId, topicList.get(i));
+            } else {
+                worker = new Publisher(BROKER_URL, publisherId, topicList.get(i));
+            }
             publishers.add(worker);
             LOGGER.info("Created worker {}.", worker.getTopic());
         }
@@ -256,15 +148,17 @@ public class MoquetteTest {
     }
 
     public void startWorkers() {
-        for (Publisher worker : publishers) {
-            new Thread(worker).start();
-        }
+        sleep(PUBLISHER_START_DELAY_MILLIS);
         if (checker != null) {
             if (!checker.cancel(true)) {
                 LOGGER.info("Failed to cancel checker task.");
             }
         }
         checker = executor.scheduleAtFixedRate(this::checkWorkers, 500, 500, TimeUnit.MILLISECONDS);
+        for (Publisher worker : publishers) {
+            sleep(PUBLISHER_RAMP_UP_DELAY_MILLIS);
+            new Thread(worker).start();
+        }
     }
 
     public void startListeners() {
@@ -276,55 +170,51 @@ public class MoquetteTest {
     public void checkWorkers() {
         long now = System.currentTimeMillis();
         long cutOff = now - cutoff;
+        long totalSent = 0;
+        long totalBatches = 0;
         for (Publisher worker : publishers) {
-            if (worker.isWorking()) {
-                if (worker.getLastMessage() < cutOff) {
-                    failedCount++;
-                    worker.setWorking(false);
-                    LOGGER.warn("Worker {} is not working. Now {} stopped.", worker.getTopic(), failedCount);
-                }
-            } else {
-                if (worker.getLastMessage() > cutOff) {
-                    failedCount--;
-                    worker.setWorking(true);
-                    LOGGER.warn("Worker {} seems to have resumed working. Now {} stopped.", worker.getTopic(), failedCount);
+            totalSent += worker.getSentCount();
+            totalBatches += worker.getBatchCount();
+            if (!worker.isStopped()) {
+                if (worker.isWorking()) {
+                    if (worker.getLastMessage() < cutOff) {
+                        failedCount++;
+                        worker.setWorking(false);
+                        LOGGER.warn("Worker {} is not working. Now {} stopped.", worker.getTopic(), failedCount);
+                    }
+                } else {
+                    if (worker.getLastMessage() > cutOff) {
+                        failedCount--;
+                        worker.setWorking(true);
+                        LOGGER.warn("Worker {} seems to have resumed working. Now {} stopped.", worker.getTopic(), failedCount);
+                    }
                 }
             }
         }
-        long total = 0;
+        long totalRecv = 0;
         for (Listener listener : listeners) {
-            total += listener.getRecvCount();
+            totalRecv += listener.getRecvCount();
         }
-        LOGGER.info("Received {} messages on all topics", total);
+        long diff = totalRecv - totalSent;
+        LOGGER.info("Sent/Received {} / {} messages ({}) in {} batches", totalSent, totalRecv, diff, totalBatches);
     }
 
     public void startServer() {
         broker = new Server();
-        IConfig config = new MemoryConfig(new Properties());
 
+        IConfig config = new MemoryConfig(new Properties());
         config.setProperty(BrokerConstants.ALLOW_ANONYMOUS_PROPERTY_NAME, Boolean.TRUE.toString());
         config.setProperty(BrokerConstants.IMMEDIATE_BUFFER_FLUSH_PROPERTY_NAME, Boolean.TRUE.toString());
+        final Path storePath = Paths.get(BrokerConstants.DEFAULT_MOQUETTE_STORE_H2_DB_FILENAME);
+        if (storePath.toFile().exists()) {
+            storePath.toFile().delete();
+        }
+        String defaultPersistentStore = storePath.toString();
+        config.setProperty(BrokerConstants.PERSISTENT_STORE_PROPERTY_NAME, defaultPersistentStore);
+        config.setProperty(BrokerConstants.AUTOSAVE_INTERVAL_PROPERTY_NAME, Integer.toString(H2_AUTO_SAVE_INTERVAL));
 
         try {
             broker.startServer(config);
-            try {
-                client = new MqttClient(BROKER_URL, clientId, new MemoryPersistence());
-                MqttConnectOptions connOpts = new MqttConnectOptions();
-                connOpts.setCleanSession(true);
-                connOpts.setKeepAliveInterval(30);
-                connOpts.setConnectionTimeout(30);
-                connOpts.setMaxInflight(maxInFlight);
-                LOGGER.info("paho-client connecting to broker: " + broker);
-                try {
-                    client.connect(connOpts);
-                    client.subscribe("#");
-                    LOGGER.info("paho-client connected to broker");
-                } catch (MqttException ex) {
-                    LOGGER.error("Could not connect to MQTT server.", ex);
-                }
-            } catch (MqttException ex) {
-                LOGGER.error("Could not create MQTT Client.", ex);
-            }
         } catch (IOException ex) {
             LOGGER.error("Could not start MQTT server.", ex);
         }
@@ -333,18 +223,6 @@ public class MoquetteTest {
 
     public void stopServer() {
         executor.shutdown();
-        if (client != null && client.isConnected()) {
-            try {
-                client.disconnectForcibly();
-            } catch (MqttException ex) {
-                LOGGER.debug("exception when forcefully disconnecting MQTT client", ex);
-            }
-            try {
-                client.close(true);
-            } catch (MqttException ex) {
-                LOGGER.debug("exception when forcefully disconnecting MQTT client", ex);
-            }
-        }
         if (broker != null) {
             broker.stopServer();
         }
@@ -354,21 +232,34 @@ public class MoquetteTest {
 
     public void work() throws UnsupportedEncodingException, IOException, MqttException {
         for (int i = 0; i < TOPIC_COUNT; i++) {
-            topicList.add(TOPIC_PREFIX + "Client-" + i + TOPIC_POSTFIX);
+            topicList.add(TOPIC_PREFIX + i + TOPIC_POSTFIX);
         }
         startServer();
         createPublisers();
         createListeners();
-        startWorkers();
         startListeners();
+        startWorkers();
 
         try (BufferedReader input = new BufferedReader(new InputStreamReader(System.in, "UTF-8"))) {
             LOGGER.warn("Press Enter to exit.");
             input.read();
-            LOGGER.warn("Exiting...");
+            LOGGER.warn("Stopping Listeners...");
             stopListeners();
+            LOGGER.warn("Stopping Publishers...");
             stopPublishers();
+            sleep(1000);
+            LOGGER.warn("Stopping Server...");
             stopServer();
+        }
+    }
+
+    private void sleep(long time) {
+        if (time <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(time);
+        } catch (InterruptedException ex) {
         }
     }
 

@@ -11,6 +11,11 @@
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <mainClass>tests.moquettetests.MoquetteTest</mainClass>
+        <logback.version>1.2.3</logback.version>
+        <moquette-broker.version>0.14</moquette-broker.version>
+        <paho.version>1.2.5</paho.version>
+        <!-- paho.version>1.2.5</paho.version -->
+        <!-- paho.version>1.2.6-SNAPSHOT</paho.version -->
     </properties>
 
     <repositories>
@@ -34,17 +39,17 @@
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.2.3</version>
+            <version>${logback.version}</version>
         </dependency>
         <dependency>
             <groupId>org.eclipse.paho</groupId>
             <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
-            <version>1.2.5</version>
+            <version>${paho.version}</version>
         </dependency>
         <dependency>
             <groupId>io.moquette</groupId>
             <artifactId>moquette-broker</artifactId>
-            <version>0.14</version>
+            <version>${moquette-broker.version}</version>
             <exclusions>
                 <exclusion>
                     <groupId>org.slf4j</groupId>

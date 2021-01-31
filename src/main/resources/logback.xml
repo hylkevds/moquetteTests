@@ -7,6 +7,7 @@
     </appender>
 
     <logger name="io.moquette.broker.metrics.MQTTMessageLogger" level="WARN"/>
+    <logger name="io.moquette.broker.PostOffice" level="WARN"/>
 
     <root level="INFO">
         <appender-ref ref="STDOUT" />
