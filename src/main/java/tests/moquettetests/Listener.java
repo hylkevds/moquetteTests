@@ -62,10 +62,14 @@ class Listener implements Runnable {
                 for (String topic : topics) {
                     client.subscribe(topic, MoquetteTest.QOS_LISTEN, (String msgTopic, MqttMessage message) -> {
                         recvCount.incrementAndGet();
+                        String msg = message.toString();
+                        if (!msg.startsWith("Last") || !msg.endsWith(MoquetteTest.MESSAGE)) {
+                            LOGGER.error("Incorrect message: {}", msg);
+                        }
                         LOGGER.trace("{} Received message on {}", clientId, msgTopic);
                     });
                 }
-                LOGGER.info("Subscribed to {} topics.", topics.length);
+                LOGGER.trace("Subscribed to {} topics.", topics.length);
                 if (!stop) {
                     sleep(MoquetteTest.CLIENT_LIVE_MILLIS);
                 }

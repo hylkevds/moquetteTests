@@ -94,6 +94,7 @@ class Publisher implements Runnable {
             MqttPublishVariableHeader varHeader = new MqttPublishVariableHeader(topic, 0);
             MqttPublishMessage mqttPublishMessage = new MqttPublishMessage(fixedHeader, varHeader, payload);
             broker.internalPublish(mqttPublishMessage, clientId);
+            payload.release();
             sentCount.incrementAndGet();
             lastMessage = System.currentTimeMillis();
         }
