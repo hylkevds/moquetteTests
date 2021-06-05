@@ -34,7 +34,7 @@ public class MoquetteTest {
      * The logger for this class.
      */
     public static final Logger LOGGER = LoggerFactory.getLogger(MoquetteTest.class);
-    public static final int QOS_LISTEN = 1;
+    public static final int QOS_LISTEN = 2;
     public static final int QOS_PUBLISH = 2;
     public static final String BROKER_URL = "tcp://127.0.0.1:1883";
     public static final String TOPIC_PREFIX = "Datastreams(";
@@ -43,11 +43,13 @@ public class MoquetteTest {
     /**
      * Clients connect, subscript, listen for this long, then unsubscribe.
      */
-    public static final long CLIENT_LIVE_MILLIS = 60 * 60 * 1000;
+    public static final long CLIENT_LIVE_MILLIS = 10 * 1000;
     /**
      * After unsubscribing, clients sleep for this long, and start over.
      */
-    public static final long CLIENT_DOWN_MILLIS = 1;
+    public static final long CLIENT_DOWN_MILLIS = 10;
+
+    public static final boolean CLIENT_CLEAN_SESSION = false;
 
     /**
      * Publish directly using moquette internal API?
@@ -56,7 +58,7 @@ public class MoquetteTest {
     /**
      * Publish this many messages in one go.
      */
-    public static final long PUBLISHER_BATCH_COUNT = 100;
+    public static final long PUBLISHER_BATCH_COUNT = 500;
     /**
      * Then sleep for this long.
      */
@@ -69,21 +71,23 @@ public class MoquetteTest {
     /**
      * How long to wait before the start of the next publisher.
      */
-    public static final long PUBLISHER_RAMP_UP_DELAY_MILLIS = 1;
+    public static final long PUBLISHER_RAMP_UP_DELAY_MILLIS = 10;
+
+    private static final int WORKER_CHECK_INTERVAL = 1000;
 
     public static final int MAX_IN_FLIGHT = 9999;
-    public static final long TOPIC_COUNT = 20;
+    public static final long TOPIC_COUNT = 50;
     public static final int H2_AUTO_SAVE_INTERVAL = 1;
 
     private Server broker;
-    private final int threadCountPublish = 1;
-    private final int threadCountListen = 1;
+    private final int threadCountPublish = 5;
+    private final int threadCountListen = 5;
 
     /**
      * The number of milliseconds a worker is allowed to not work before we
      * complain.
      */
-    private final long cutoff = PUBLISHER_SLEEP_MILLIS + 100;
+    private final long cutoff = PUBLISHER_SLEEP_MILLIS + 500;
 
     private final List<Publisher> publishers = new ArrayList<>();
     private final List<Listener> listeners = new ArrayList<>();
@@ -154,7 +158,7 @@ public class MoquetteTest {
                 LOGGER.info("Failed to cancel checker task.");
             }
         }
-        checker = executor.scheduleAtFixedRate(this::checkWorkers, 500, 500, TimeUnit.MILLISECONDS);
+        checker = executor.scheduleAtFixedRate(this::checkWorkers, WORKER_CHECK_INTERVAL, WORKER_CHECK_INTERVAL, TimeUnit.MILLISECONDS);
         for (Publisher worker : publishers) {
             sleep(PUBLISHER_RAMP_UP_DELAY_MILLIS);
             new Thread(worker).start();
@@ -210,7 +214,7 @@ public class MoquetteTest {
             storePath.toFile().delete();
         }
         String defaultPersistentStore = storePath.toString();
-        config.setProperty(BrokerConstants.PERSISTENT_STORE_PROPERTY_NAME, defaultPersistentStore);
+        //config.setProperty(BrokerConstants.PERSISTENT_STORE_PROPERTY_NAME, defaultPersistentStore);
         config.setProperty(BrokerConstants.AUTOSAVE_INTERVAL_PROPERTY_NAME, Integer.toString(H2_AUTO_SAVE_INTERVAL));
 
         try {

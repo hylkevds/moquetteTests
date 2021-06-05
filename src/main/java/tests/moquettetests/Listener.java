@@ -10,8 +10,10 @@ import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import static tests.moquettetests.MoquetteTest.CLIENT_CLEAN_SESSION;
 
 /**
  *
@@ -31,7 +33,7 @@ class Listener implements Runnable {
     public Listener(String serverUrl, String clientId, String[] topics) throws MqttException {
         this.clientId = clientId;
         this.topics = topics;
-        this.client = new MqttClient(serverUrl, clientId);
+        this.client = new MqttClient(serverUrl, clientId, new MemoryPersistence());
     }
 
     public void stop() {
@@ -55,7 +57,7 @@ class Listener implements Runnable {
         while (!stop) {
             try {
                 MqttConnectOptions connOpts = new MqttConnectOptions();
-                connOpts.setCleanSession(false);
+                connOpts.setCleanSession(CLIENT_CLEAN_SESSION);
                 connOpts.setKeepAliveInterval(30);
                 connOpts.setConnectionTimeout(30);
                 client.connect(connOpts);
@@ -69,7 +71,7 @@ class Listener implements Runnable {
                         LOGGER.trace("{} Received message on {}", clientId, msgTopic);
                     });
                 }
-                LOGGER.trace("Subscribed to {} topics.", topics.length);
+                LOGGER.info("Subscribed to {} topics.", topics.length);
                 if (!stop) {
                     sleep(MoquetteTest.CLIENT_LIVE_MILLIS);
                 }

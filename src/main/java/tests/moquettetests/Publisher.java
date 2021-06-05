@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,7 +52,7 @@ class Publisher implements Runnable {
     public Publisher(String serverUrl, String clientId, String topic) throws MqttException {
         this.clientId = clientId;
         this.topic = topic;
-        this.client = new MqttClient(serverUrl, clientId);
+        this.client = new MqttClient(serverUrl, clientId, new MemoryPersistence());
         this.broker = null;
     }
 
@@ -94,7 +95,6 @@ class Publisher implements Runnable {
             MqttPublishVariableHeader varHeader = new MqttPublishVariableHeader(topic, 0);
             MqttPublishMessage mqttPublishMessage = new MqttPublishMessage(fixedHeader, varHeader, payload);
             broker.internalPublish(mqttPublishMessage, clientId);
-            payload.release();
             sentCount.incrementAndGet();
             lastMessage = System.currentTimeMillis();
         }
