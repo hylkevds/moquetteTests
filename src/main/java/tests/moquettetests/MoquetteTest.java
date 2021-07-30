@@ -8,6 +8,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
+import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -28,6 +29,11 @@ import org.slf4j.LoggerFactory;
  */
 public class MoquetteTest {
 
+    public static enum YES_NO_ALTERNATE {
+        YES,
+        NO,
+        ALTERNATE
+    }
     public static final Charset UTF8 = Charset.forName("UTF-8");
 
     /**
@@ -40,16 +46,20 @@ public class MoquetteTest {
     public static final String TOPIC_PREFIX = "Datastreams(";
     public static final String TOPIC_POSTFIX = ")/Observations";
 
+    public static final boolean USE_PAHO_CLIENT = false;
+    public static final boolean USE_HIVEMQ_CLIENT = true;
     /**
      * Clients connect, subscript, listen for this long, then unsubscribe.
      */
-    public static final long CLIENT_LIVE_MILLIS = 10 * 1000;
+    public static final long CLIENT_LIVE_MILLIS = 15 * 1000;
     /**
      * After unsubscribing, clients sleep for this long, and start over.
      */
-    public static final long CLIENT_DOWN_MILLIS = 10;
+    public static final long CLIENT_DOWN_MILLIS = 1000;
 
-    public static final boolean CLIENT_CLEAN_SESSION = false;
+    public static final YES_NO_ALTERNATE CLIENT_CLEAN_SESSION = YES_NO_ALTERNATE.ALTERNATE;
+
+    public static final boolean CLIENT_UNSUBSCRIBE_BEFORE_DISCONNECT = false;
 
     /**
      * Publish directly using moquette internal API?
@@ -58,7 +68,7 @@ public class MoquetteTest {
     /**
      * Publish this many messages in one go.
      */
-    public static final long PUBLISHER_BATCH_COUNT = 500;
+    public static final long PUBLISHER_BATCH_COUNT = 100;
     /**
      * Then sleep for this long.
      */
@@ -73,10 +83,10 @@ public class MoquetteTest {
      */
     public static final long PUBLISHER_RAMP_UP_DELAY_MILLIS = 10;
 
-    private static final int WORKER_CHECK_INTERVAL = 1000;
+    private static final int WORKER_CHECK_INTERVAL = 1_000;
 
     public static final int MAX_IN_FLIGHT = 9999;
-    public static final long TOPIC_COUNT = 50;
+    public static final long TOPIC_COUNT = 5000;
     public static final int H2_AUTO_SAVE_INTERVAL = 1;
 
     private Server broker;
@@ -100,6 +110,7 @@ public class MoquetteTest {
     public static final String MESSAGE = "test";
 
     public MoquetteTest() {
+        System.out.println("\n\nTest\n\n");
     }
 
     public void stopPublishers() {
@@ -139,13 +150,21 @@ public class MoquetteTest {
         }
     }
 
-    public void createListeners() throws MqttException {
+    public void createListeners() throws MqttException, URISyntaxException {
         if (!listeners.isEmpty()) {
             stopListeners();
         }
+        boolean lastWasPaho = false;
         for (int i = 0; i < threadCountListen; i++) {
             String listenerId = "Listener-" + i;
-            Listener worker = new Listener(BROKER_URL, listenerId, topicList.toArray(new String[topicList.size()]));
+            Listener worker;
+            if (USE_PAHO_CLIENT && !lastWasPaho || !USE_HIVEMQ_CLIENT) {
+                worker = new ListenerPaho(BROKER_URL, listenerId, topicList.toArray(new String[topicList.size()]));
+                lastWasPaho = true;
+            } else {
+                worker = new ListenerHiveMq(BROKER_URL, listenerId, topicList.toArray(new String[topicList.size()]));
+                lastWasPaho = false;
+            }
             listeners.add(worker);
             LOGGER.info("Created Listener {}.", listenerId);
         }
@@ -234,7 +253,7 @@ public class MoquetteTest {
         LOGGER.info("Stopped checker. {} tasks still running.", shutdownNow.size());
     }
 
-    public void work() throws UnsupportedEncodingException, IOException, MqttException {
+    public void work() throws UnsupportedEncodingException, IOException, MqttException, URISyntaxException {
         for (int i = 0; i < TOPIC_COUNT; i++) {
             topicList.add(TOPIC_PREFIX + i + TOPIC_POSTFIX);
         }
@@ -245,13 +264,18 @@ public class MoquetteTest {
         startWorkers();
 
         try (BufferedReader input = new BufferedReader(new InputStreamReader(System.in, "UTF-8"))) {
-            LOGGER.warn("Press Enter to exit.");
+            LOGGER.warn("Press Enter to stop publishers.");
+            input.read();
+            LOGGER.warn("Stopping Publishers...");
+            stopPublishers();
+
+            LOGGER.warn("Press Enter to stop listeners.");
             input.read();
             LOGGER.warn("Stopping Listeners...");
             stopListeners();
-            LOGGER.warn("Stopping Publishers...");
-            stopPublishers();
-            sleep(1000);
+
+            LOGGER.warn("Press Enter to exit.");
+            input.read();
             LOGGER.warn("Stopping Server...");
             stopServer();
         }
@@ -272,7 +296,7 @@ public class MoquetteTest {
      * @throws java.io.UnsupportedEncodingException
      * @throws org.eclipse.paho.client.mqttv3.MqttException
      */
-    public static void main(String[] args) throws UnsupportedEncodingException, IOException, MqttException {
+    public static void main(String[] args) throws UnsupportedEncodingException, IOException, MqttException, URISyntaxException {
         MoquetteTest pahoTest = new MoquetteTest();
         pahoTest.work();
     }

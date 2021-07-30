@@ -12,28 +12,12 @@
         <maven.compiler.target>1.8</maven.compiler.target>
         <mainClass>tests.moquettetests.MoquetteTest</mainClass>
         <logback.version>1.2.3</logback.version>
-        <moquette-broker.version>0.14</moquette-broker.version>
-        <paho.version>1.2.5</paho.version>
+        <moquette-broker.version>0.16-SNAPSHOT</moquette-broker.version>
+        <paho.version>1.2.6-SNAPSHOT</paho.version>
         <!-- paho.version>1.2.5</paho.version -->
         <!-- paho.version>1.2.6-SNAPSHOT</paho.version -->
+        <hivemq-mqtt-client>1.2.2</hivemq-mqtt-client>
     </properties>
-
-    <repositories>
-        <repository>
-            <id>bintray</id>
-            <url>https://jcenter.bintray.com</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </repository>
-        <repository>
-            <id>bintray-fraunhoferiosb-Maven</id>
-            <url>https://dl.bintray.com/fraunhoferiosb/Maven</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </repository>
-    </repositories>
 
     <dependencies>
         <dependency>
@@ -47,6 +31,7 @@
             <version>${paho.version}</version>
         </dependency>
         <dependency>
+            <!-- groupId>de.fraunhofer.iosb.io.moquette</groupId -->
             <groupId>io.moquette</groupId>
             <artifactId>moquette-broker</artifactId>
             <version>${moquette-broker.version}</version>
@@ -56,6 +41,11 @@
                     <artifactId>slf4j-log4j12</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.hivemq</groupId>
+            <artifactId>hivemq-mqtt-client</artifactId>
+            <version>${hivemq-mqtt-client}</version>
         </dependency>
     </dependencies>
     
