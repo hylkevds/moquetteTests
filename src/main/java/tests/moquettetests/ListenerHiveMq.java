@@ -1,7 +1,6 @@
 package tests.moquettetests;
 
 import com.hivemq.client.internal.mqtt.datatypes.MqttTopicFilterImpl;
-import com.hivemq.client.mqtt.MqttWebSocketConfig;
 import com.hivemq.client.mqtt.datatypes.MqttTopicFilter;
 import com.hivemq.client.mqtt.mqtt3.Mqtt3AsyncClient;
 import com.hivemq.client.mqtt.mqtt3.Mqtt3Client;
@@ -118,6 +117,14 @@ class ListenerHiveMq implements Listener {
                 sleep(MoquetteTest.CLIENT_DOWN_MILLIS);
             }
         }
+        if (!lastWasClean) {
+            // One last connect, to clean the session on the server.
+            client.connectWith()
+                    .cleanSession(true)
+                    .send();
+            client.disconnect();
+        }
+
     }
 
     private void sleep(long millis) {

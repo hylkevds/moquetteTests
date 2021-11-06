@@ -12,6 +12,8 @@ import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
@@ -46,16 +48,16 @@ public class MoquetteTest {
     public static final String TOPIC_PREFIX = "Datastreams(";
     public static final String TOPIC_POSTFIX = ")/Observations";
 
-    public static final boolean USE_PAHO_CLIENT = false;
-    public static final boolean USE_HIVEMQ_CLIENT = true;
+    public static final boolean USE_PAHO_CLIENT = true;
+    public static final boolean USE_HIVEMQ_CLIENT = false;
     /**
      * Clients connect, subscript, listen for this long, then unsubscribe.
      */
-    public static final long CLIENT_LIVE_MILLIS = 15 * 1000;
+    public static final long CLIENT_LIVE_MILLIS = 10 * 1000;
     /**
      * After unsubscribing, clients sleep for this long, and start over.
      */
-    public static final long CLIENT_DOWN_MILLIS = 1000;
+    public static final long CLIENT_DOWN_MILLIS = 700;
 
     public static final YES_NO_ALTERNATE CLIENT_CLEAN_SESSION = YES_NO_ALTERNATE.ALTERNATE;
 
@@ -68,7 +70,7 @@ public class MoquetteTest {
     /**
      * Publish this many messages in one go.
      */
-    public static final long PUBLISHER_BATCH_COUNT = 100;
+    public static final long PUBLISHER_BATCH_COUNT = 1_000;
     /**
      * Then sleep for this long.
      */
@@ -86,7 +88,7 @@ public class MoquetteTest {
     private static final int WORKER_CHECK_INTERVAL = 1_000;
 
     public static final int MAX_IN_FLIGHT = 9999;
-    public static final long TOPIC_COUNT = 5000;
+    public static final long TOPIC_COUNT = 100;
     public static final int H2_AUTO_SAVE_INTERVAL = 1;
 
     private Server broker;

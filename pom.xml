@@ -13,7 +13,7 @@
         <mainClass>tests.moquettetests.MoquetteTest</mainClass>
         <logback.version>1.2.3</logback.version>
         <moquette-broker.version>0.16-SNAPSHOT</moquette-broker.version>
-        <paho.version>1.2.6-SNAPSHOT</paho.version>
+        <paho.version>1.2.5</paho.version>
         <!-- paho.version>1.2.5</paho.version -->
         <!-- paho.version>1.2.6-SNAPSHOT</paho.version -->
         <hivemq-mqtt-client>1.2.2</hivemq-mqtt-client>
