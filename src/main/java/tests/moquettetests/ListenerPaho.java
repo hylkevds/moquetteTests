@@ -22,9 +22,11 @@ class ListenerPaho implements Listener {
     private final String[] topics;
     private final MqttClient client;
     private final AtomicLong recvCount = new AtomicLong();
+    private final AtomicLong recvUnwantedCount = new AtomicLong();
     private boolean stop = false;
     private Thread current;
     private boolean lastWasClean = false;
+    private long nextSleep = MoquetteTest.CLIENT_LIVE_MILLIS_INITIAL;
 
     public ListenerPaho(String serverUrl, String clientId, String[] topics) throws MqttException {
         this.clientId = clientId;
@@ -46,6 +48,11 @@ class ListenerPaho implements Listener {
     @Override
     public long getRecvCount() {
         return recvCount.get();
+    }
+
+    @Override
+    public long getUnwantedCount() {
+        return recvUnwantedCount.get();
     }
 
     private boolean shouldCleanSession() {
@@ -83,7 +90,8 @@ class ListenerPaho implements Listener {
                 }
                 LOGGER.debug("Subscribed to {} topics with cleanSession={}.", topics.length, shouldCleanSession);
                 if (!stop) {
-                    sleep(MoquetteTest.CLIENT_LIVE_MILLIS);
+                    sleep(nextSleep);
+                    nextSleep = MoquetteTest.CLIENT_LIVE_MILLIS;
                 }
                 if (MoquetteTest.CLIENT_UNSUBSCRIBE_BEFORE_DISCONNECT) {
                     for (String topic : topics) {
@@ -116,6 +124,7 @@ class ListenerPaho implements Listener {
         connOpts.setCleanSession(cleanSession);
         connOpts.setKeepAliveInterval(30);
         connOpts.setConnectionTimeout(30);
+        connOpts.setMaxInflight(MoquetteTest.MAX_IN_FLIGHT_LISTENERS);
         LOGGER.info("Connecting with cleanSession={}", cleanSession);
         client.connect(connOpts);
     }

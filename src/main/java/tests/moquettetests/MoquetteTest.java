@@ -1,6 +1,7 @@
 package tests.moquettetests;
 
 import io.moquette.BrokerConstants;
+import io.moquette.broker.PostOffice;
 import io.moquette.broker.Server;
 import io.moquette.broker.config.IConfig;
 import io.moquette.broker.config.MemoryConfig;
@@ -16,11 +17,13 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +56,8 @@ public class MoquetteTest {
     /**
      * Clients connect, subscript, listen for this long, then unsubscribe.
      */
-    public static final long CLIENT_LIVE_MILLIS = 10 * 1000;
+    public static final long CLIENT_LIVE_MILLIS = 12_000;
+    public static final long CLIENT_LIVE_MILLIS_INITIAL = 120_000_000;
     /**
      * After unsubscribing, clients sleep for this long, and start over.
      */
@@ -61,39 +65,45 @@ public class MoquetteTest {
 
     public static final YES_NO_ALTERNATE CLIENT_CLEAN_SESSION = YES_NO_ALTERNATE.ALTERNATE;
 
-    public static final boolean CLIENT_UNSUBSCRIBE_BEFORE_DISCONNECT = false;
+    public static final boolean CLIENT_UNSUBSCRIBE_BEFORE_DISCONNECT = true;
 
     /**
      * Publish directly using moquette internal API?
      */
-    public static final boolean PUBLISH_DIRECT = true;
+    public static final boolean PUBLISH_DIRECT = false;
     /**
      * Publish this many messages in one go.
      */
     public static final long PUBLISHER_BATCH_COUNT = 1_000;
     /**
+     * Slowly increase the publish batch count with this amount until
+     * {@link #PUBLISHER_BATCH_COUNT} is reached.
+     */
+    public static final long PUBLISHER_BATCH_COUNT_INCREMENT = 20;
+    /**
      * Then sleep for this long.
      */
-    public static final long PUBLISHER_SLEEP_MILLIS = 1_000;
+    public static final long PUBLISHER_SLEEP_MILLIS = 4_000;
 
     /**
      * How long to wait before the start the publishers.
      */
-    public static final long PUBLISHER_START_DELAY_MILLIS = 1_000;
+    public static final long PUBLISHER_START_DELAY_MILLIS = 2_000;
     /**
      * How long to wait before the start of the next publisher.
      */
-    public static final long PUBLISHER_RAMP_UP_DELAY_MILLIS = 10;
+    public static final long PUBLISHER_RAMP_UP_DELAY_MILLIS = 200;
 
     private static final int WORKER_CHECK_INTERVAL = 1_000;
 
-    public static final int MAX_IN_FLIGHT = 9999;
-    public static final long TOPIC_COUNT = 100;
+    public static final int MAX_IN_FLIGHT_LISTENERS = 9999;
+    public static final int MAX_IN_FLIGHT_PUBLISHERS = 10;
+    public static final long TOPIC_COUNT = 2;
     public static final int H2_AUTO_SAVE_INTERVAL = 1;
 
     private Server broker;
-    private final int threadCountPublish = 5;
-    private final int threadCountListen = 5;
+    private final int threadCountPublish = 2;
+    private final int threadCountListen = 100;
 
     /**
      * The number of milliseconds a worker is allowed to not work before we
@@ -135,7 +145,7 @@ public class MoquetteTest {
         listeners.clear();
     }
 
-    public void createPublisers() throws MqttException {
+    public void createPublisers() throws MqttException, URISyntaxException {
         if (!publishers.isEmpty()) {
             stopPublishers();
         }
@@ -174,12 +184,6 @@ public class MoquetteTest {
 
     public void startWorkers() {
         sleep(PUBLISHER_START_DELAY_MILLIS);
-        if (checker != null) {
-            if (!checker.cancel(true)) {
-                LOGGER.info("Failed to cancel checker task.");
-            }
-        }
-        checker = executor.scheduleAtFixedRate(this::checkWorkers, WORKER_CHECK_INTERVAL, WORKER_CHECK_INTERVAL, TimeUnit.MILLISECONDS);
         for (Publisher worker : publishers) {
             sleep(PUBLISHER_RAMP_UP_DELAY_MILLIS);
             new Thread(worker).start();
@@ -187,6 +191,12 @@ public class MoquetteTest {
     }
 
     public void startListeners() {
+        if (checker != null) {
+            if (!checker.cancel(true)) {
+                LOGGER.info("Failed to cancel checker task.");
+            }
+        }
+        checker = executor.scheduleAtFixedRate(this::checkWorkers, 0, WORKER_CHECK_INTERVAL, TimeUnit.MILLISECONDS);
         for (Listener worker : listeners) {
             new Thread(worker).start();
         }
@@ -217,11 +227,22 @@ public class MoquetteTest {
             }
         }
         long totalRecv = 0;
+        long totalRecvOdd = 0;
         for (Listener listener : listeners) {
             totalRecv += listener.getRecvCount();
+            totalRecvOdd += listener.getUnwantedCount();
         }
-        long diff = totalRecv - totalSent;
-        LOGGER.info("Sent/Received {} / {} messages ({}) in {} batches", totalSent, totalRecv, diff, totalBatches);
+        long diff = (long) (Math.floor(totalRecv + totalRecvOdd) - totalSent * threadCountListen);
+        StringBuilder failCounts = new StringBuilder();
+        StringBuilder sizeCounts = new StringBuilder();
+        for (int i = 0; i < PostOffice.QUEUE_FAILURES.length; i++) {
+            failCounts.append(" ").append(PostOffice.QUEUE_FAILURES[i].get());
+            sizeCounts.append(" ").append(PostOffice.SESSION_QUEUES[i].remainingCapacity());
+        }
+        LOGGER.info("Sent/Received {} / {} + {} messages ({}) in {} batches. {} / {} ({}, {})",
+                totalSent, totalRecv, totalRecvOdd, diff, totalBatches,
+                sizeCounts, failCounts,
+                PostOffice.FAILED_PUBLISHES.packetsMap.size(), PostOffice.SUBSCRIPTIONS.size());
     }
 
     public void startServer() {
@@ -230,6 +251,7 @@ public class MoquetteTest {
         IConfig config = new MemoryConfig(new Properties());
         config.setProperty(BrokerConstants.ALLOW_ANONYMOUS_PROPERTY_NAME, Boolean.TRUE.toString());
         config.setProperty(BrokerConstants.IMMEDIATE_BUFFER_FLUSH_PROPERTY_NAME, Boolean.TRUE.toString());
+        config.setProperty(BrokerConstants.NETTY_MAX_BYTES_PROPERTY_NAME, "200000");
         final Path storePath = Paths.get(BrokerConstants.DEFAULT_MOQUETTE_STORE_H2_DB_FILENAME);
         if (storePath.toFile().exists()) {
             storePath.toFile().delete();
@@ -278,6 +300,9 @@ public class MoquetteTest {
 
             LOGGER.warn("Press Enter to exit.");
             input.read();
+            for (Map.Entry<String, AtomicLong> entry : PostOffice.QUEUE_ADD_THREADS.entrySet()) {
+                LOGGER.info("{} : {}", entry.getValue().get(), entry.getKey());
+            }
             LOGGER.warn("Stopping Server...");
             stopServer();
         }

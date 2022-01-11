@@ -1,6 +1,7 @@
 package tests.moquettetests;
 
 import com.hivemq.client.internal.mqtt.datatypes.MqttTopicFilterImpl;
+import com.hivemq.client.mqtt.MqttGlobalPublishFilter;
 import com.hivemq.client.mqtt.datatypes.MqttTopicFilter;
 import com.hivemq.client.mqtt.mqtt3.Mqtt3AsyncClient;
 import com.hivemq.client.mqtt.mqtt3.Mqtt3Client;
@@ -9,6 +10,7 @@ import java.net.URISyntaxException;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,9 +30,11 @@ class ListenerHiveMq implements Listener {
     private final List<MqttTopicFilter> topicFilters = new ArrayList<>();
     private final Mqtt3AsyncClient client;
     private final AtomicLong recvCount = new AtomicLong();
+    private final AtomicLong recvUnwantedCount = new AtomicLong();
     private boolean stop = false;
     private Thread current;
     private boolean lastWasClean = false;
+    private long nextSleep = MoquetteTest.CLIENT_LIVE_MILLIS_INITIAL;
 
     public ListenerHiveMq(String serverString, String clientId, String[] topics) throws URISyntaxException {
         this.clientId = clientId;
@@ -65,6 +69,11 @@ class ListenerHiveMq implements Listener {
         return recvCount.get();
     }
 
+    @Override
+    public long getUnwantedCount() {
+        return recvUnwantedCount.get();
+    }
+
     private boolean shouldCleanSession() {
         switch (CLIENT_CLEAN_SESSION) {
             case YES:
@@ -86,9 +95,14 @@ class ListenerHiveMq implements Listener {
         LOGGER.info("Listening on {} topics", topics.length);
         while (!stop) {
             final boolean shouldCleanSession = shouldCleanSession();
-            client.connectWith()
-                    .cleanSession(shouldCleanSession)
-                    .send();
+            client.publishes(MqttGlobalPublishFilter.UNSOLICITED, t -> recvUnwantedCount.incrementAndGet());
+            try {
+                client.connectWith()
+                        .cleanSession(shouldCleanSession)
+                        .send().get();
+            } catch (InterruptedException | ExecutionException ex) {
+                LOGGER.error("Exception while unsubscribing.");
+            }
             for (String topic : topics) {
                 client.subscribeWith()
                         .topicFilter(topic)
@@ -107,10 +121,15 @@ class ListenerHiveMq implements Listener {
             }
             LOGGER.info("Subscribed to {} topics with cleanSession={}.", topics.length, shouldCleanSession);
             if (!stop) {
-                sleep(MoquetteTest.CLIENT_LIVE_MILLIS);
+                sleep(nextSleep);
+                nextSleep = MoquetteTest.CLIENT_LIVE_MILLIS;
             }
             if (MoquetteTest.CLIENT_UNSUBSCRIBE_BEFORE_DISCONNECT) {
-                client.unsubscribeWith().addTopicFilters(topicFilters).send();
+                try {
+                    client.unsubscribeWith().addTopicFilters(topicFilters).send().get();
+                } catch (InterruptedException | ExecutionException ex) {
+                    LOGGER.error("Exception while unsubscribing.");
+                }
             }
             client.disconnect();
             if (!stop) {
