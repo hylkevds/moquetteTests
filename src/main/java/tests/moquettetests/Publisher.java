@@ -1,5 +1,9 @@
 package tests.moquettetests;
 
+import com.hivemq.client.mqtt.MqttClientBuilder;
+import com.hivemq.client.mqtt.datatypes.MqttQos;
+import com.hivemq.client.mqtt.mqtt3.Mqtt3BlockingClient;
+import com.hivemq.client.mqtt.mqtt3.Mqtt3Client;
 import io.moquette.broker.Server;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
@@ -9,6 +13,9 @@ import io.netty.handler.codec.mqtt.MqttMessageType;
 import io.netty.handler.codec.mqtt.MqttPublishMessage;
 import io.netty.handler.codec.mqtt.MqttPublishVariableHeader;
 import io.netty.handler.codec.mqtt.MqttQoS;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
@@ -16,6 +23,8 @@ import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import static tests.moquettetests.MoquetteTest.PUBLISHER_BATCH_COUNT;
+import static tests.moquettetests.MoquetteTest.PUBLISHER_BATCH_COUNT_INCREMENT;
 
 /**
  *
@@ -32,9 +41,11 @@ class Publisher implements Runnable {
     private long lastMessage = 0;
     private boolean stop = false;
     private final String clientId;
-    private final MqttClient client;
+    private final MqttClient clientPaho;
+    private final Mqtt3BlockingClient clientHiveMq;
     private final Server broker;
     private final String topic;
+    private long batchCountCurrent = PUBLISHER_BATCH_COUNT_INCREMENT;
     /**
      * Flag to indicate we think it is working, so we don't keep complaining
      * about the same worker.
@@ -44,10 +55,24 @@ class Publisher implements Runnable {
     private final AtomicLong batchCount = new AtomicLong();
     private Thread current;
 
-    public Publisher(String serverUrl, String clientId, String topic) throws MqttException {
+    public Publisher(String serverUrl, String clientId, String topic) throws MqttException, URISyntaxException {
         this.clientId = clientId;
         this.topic = topic;
-        this.client = new MqttClient(serverUrl, clientId, new MemoryPersistence());
+        if (MoquetteTest.USE_HIVEMQ_CLIENT) {
+            URI serverUri = new URI(serverUrl);
+            this.clientHiveMq = Mqtt3Client.builder()
+                    .identifier(clientId)
+                    .serverHost(serverUri.getHost())
+                    .serverPort(serverUri.getPort())
+                    .addDisconnectedListener((context) -> {
+                        LOGGER.info("connectionLost");
+                    })
+                    .buildBlocking();
+            this.clientPaho = null;
+        } else {
+            this.clientHiveMq = null;
+            this.clientPaho = new MqttClient(serverUrl, clientId, new MemoryPersistence());
+        }
         this.broker = null;
     }
 
@@ -55,7 +80,8 @@ class Publisher implements Runnable {
         this.clientId = clientId;
         this.topic = topic;
         this.broker = broker;
-        this.client = null;
+        this.clientPaho = null;
+        this.clientHiveMq = null;
     }
 
     @Override
@@ -65,8 +91,11 @@ class Publisher implements Runnable {
         stop = false;
         while (!stop) {
             String message = "Last: " + lastMessage + MoquetteTest.MESSAGE;
-            if (client != null) {
-                publishClient(message);
+            if (clientHiveMq != null) {
+                publishHiveMq(message);
+            }
+            if (clientPaho != null) {
+                publishPaho(message);
             }
             if (broker != null) {
                 publishDirect(message);
@@ -75,8 +104,8 @@ class Publisher implements Runnable {
         }
         LOGGER.info("Publisher {} exiting: {}", clientId, topic);
         try {
-            if (client != null && client.isConnected()) {
-                client.disconnect(1000L);
+            if (clientPaho != null && clientPaho.isConnected()) {
+                clientPaho.disconnect(1000L);
             }
         } catch (MqttException ex) {
             LOGGER.error("Failed to close pubish client", ex);
@@ -84,7 +113,7 @@ class Publisher implements Runnable {
     }
 
     private void publishDirect(String message) {
-        for (int i = 0; i < MoquetteTest.PUBLISHER_BATCH_COUNT && !stop; i++) {
+        for (int i = 0; i < batchCountCurrent && !stop; i++) {
             final ByteBuf payload = ByteBufUtil.writeUtf8(UnpooledByteBufAllocator.DEFAULT, message);
             MqttFixedHeader fixedHeader = new MqttFixedHeader(MqttMessageType.PUBLISH, false, MqttQoS.valueOf(MoquetteTest.QOS_PUBLISH), false, 0);
             MqttPublishVariableHeader varHeader = new MqttPublishVariableHeader(topic, 0);
@@ -94,21 +123,51 @@ class Publisher implements Runnable {
             lastMessage = System.currentTimeMillis();
         }
         batchCount.incrementAndGet();
+        if (batchCountCurrent < PUBLISHER_BATCH_COUNT) {
+            batchCountCurrent += PUBLISHER_BATCH_COUNT_INCREMENT;
+            batchCountCurrent = Math.min(batchCountCurrent, PUBLISHER_BATCH_COUNT);
+        }
     }
 
-    private void publishClient(String message) throws IllegalArgumentException {
+    private void publishHiveMq(String message) throws IllegalArgumentException {
+        if (!clientHiveMq.getState().isConnected()) {
+            clientHiveMq.connectWith()
+                    .cleanSession(true)
+                    .send();
+        }
+        for (int i = 0; i < batchCountCurrent && !stop; i++) {
+            if (clientHiveMq.getState().isConnected()) {
+                clientHiveMq.publishWith()
+                        .topic(topic)
+                        .payload(message.getBytes(MoquetteTest.UTF8))
+                        .qos(MqttQos.fromCode(MoquetteTest.QOS_PUBLISH))
+                        .send();
+                sentCount.incrementAndGet();
+            } else {
+                LOGGER.info("Publisher {} lost connection: {}", clientId, topic);
+            }
+            lastMessage = System.currentTimeMillis();
+        }
+        batchCount.incrementAndGet();
+        if (batchCountCurrent < PUBLISHER_BATCH_COUNT) {
+            batchCountCurrent += PUBLISHER_BATCH_COUNT_INCREMENT;
+            batchCountCurrent = Math.min(batchCountCurrent, PUBLISHER_BATCH_COUNT);
+        }
+    }
+
+    private void publishPaho(String message) throws IllegalArgumentException {
         try {
-            if (!client.isConnected()) {
+            if (!clientPaho.isConnected()) {
                 MqttConnectOptions connOpts = new MqttConnectOptions();
                 connOpts.setCleanSession(true);
                 connOpts.setKeepAliveInterval(30);
                 connOpts.setConnectionTimeout(30);
-                connOpts.setMaxInflight(MoquetteTest.MAX_IN_FLIGHT);
-                client.connect(connOpts);
+                connOpts.setMaxInflight(MoquetteTest.MAX_IN_FLIGHT_PUBLISHERS);
+                clientPaho.connect(connOpts);
             }
-            for (int i = 0; i < MoquetteTest.PUBLISHER_BATCH_COUNT && !stop; i++) {
-                if (client.isConnected()) {
-                    client.publish(topic, message.getBytes(MoquetteTest.UTF8), MoquetteTest.QOS_PUBLISH, false);
+            for (int i = 0; i < batchCountCurrent && !stop; i++) {
+                if (clientPaho.isConnected()) {
+                    clientPaho.publish(topic, message.getBytes(MoquetteTest.UTF8), MoquetteTest.QOS_PUBLISH, false);
                     sentCount.incrementAndGet();
                 } else {
                     LOGGER.info("Publisher {} lost connection: {}", clientId, topic);
@@ -116,6 +175,10 @@ class Publisher implements Runnable {
                 lastMessage = System.currentTimeMillis();
             }
             batchCount.incrementAndGet();
+            if (batchCountCurrent < PUBLISHER_BATCH_COUNT) {
+                batchCountCurrent += PUBLISHER_BATCH_COUNT_INCREMENT;
+                batchCountCurrent = Math.min(batchCountCurrent, PUBLISHER_BATCH_COUNT);
+            }
         } catch (MqttException ex) {
             LOGGER.error("Failed to send message.", ex);
         }
