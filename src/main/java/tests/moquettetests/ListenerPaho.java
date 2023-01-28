@@ -1,5 +1,6 @@
 package tests.moquettetests;
 
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
@@ -18,17 +19,19 @@ class ListenerPaho implements Listener {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ListenerPaho.class.getName());
 
+    private final String serverUrl;
     private final String clientId;
     private final String[] topics;
-    private final MqttClient client;
+    private MqttClient client;
     private final AtomicLong recvCount = new AtomicLong();
     private final AtomicLong recvUnwantedCount = new AtomicLong();
     private boolean stop = false;
     private Thread current;
-    private boolean lastWasClean = false;
+    private boolean lastWasClean = true;
     private long nextSleep = MoquetteTest.CLIENT_LIVE_MILLIS_INITIAL;
 
     public ListenerPaho(String serverUrl, String clientId, String[] topics) throws MqttException {
+        this.serverUrl = serverUrl;
         this.clientId = clientId;
         this.topics = topics;
         this.client = new MqttClient(serverUrl, clientId, new MemoryPersistence());
@@ -73,7 +76,7 @@ class ListenerPaho implements Listener {
     @Override
     public void run() {
         current = Thread.currentThread();
-        LOGGER.info("Listening on {} topics", topics.length);
+        LOGGER.info("Client {} Listening on {} topics", client.getClientId(), topics.length);
         while (!stop) {
             final boolean shouldCleanSession = shouldCleanSession();
             try {
@@ -120,12 +123,15 @@ class ListenerPaho implements Listener {
     }
 
     private void connectToServer(final boolean cleanSession) throws MqttException {
+        if (MoquetteTest.CLIENT_RANDOMISE_IDS) {
+            client = new MqttClient(serverUrl, "c-" + UUID.randomUUID(), new MemoryPersistence());
+        }
         final MqttConnectOptions connOpts = new MqttConnectOptions();
         connOpts.setCleanSession(cleanSession);
         connOpts.setKeepAliveInterval(30);
         connOpts.setConnectionTimeout(30);
         connOpts.setMaxInflight(MoquetteTest.MAX_IN_FLIGHT_LISTENERS);
-        LOGGER.info("Connecting with cleanSession={}", cleanSession);
+        LOGGER.info("Connecting {} with cleanSession={}", client.getClientId(), cleanSession);
         client.connect(connOpts);
     }
 

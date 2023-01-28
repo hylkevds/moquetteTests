@@ -11,8 +11,8 @@
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <mainClass>tests.moquettetests.MoquetteTest</mainClass>
-        <logback.version>1.2.9</logback.version>
-        <moquette-broker.version>0.16-SNAPSHOT</moquette-broker.version>
+        <logback.version>1.2.10</logback.version>
+        <moquette-broker.version>0.17-SNAPSHOT</moquette-broker.version>
         <paho.version>1.2.5</paho.version>
         <!-- paho.version>1.2.5</paho.version -->
         <!-- paho.version>1.2.6-SNAPSHOT</paho.version -->
@@ -40,12 +40,21 @@
                     <groupId>org.slf4j</groupId>
                     <artifactId>slf4j-log4j12</artifactId>
                 </exclusion>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-reload4j</artifactId>
+                </exclusion>
             </exclusions>
         </dependency>
         <dependency>
             <groupId>com.hivemq</groupId>
             <artifactId>hivemq-mqtt-client</artifactId>
             <version>${hivemq-mqtt-client}</version>
+        </dependency>
+        <dependency>
+            <groupId>commons-codec</groupId>
+            <artifactId>commons-codec</artifactId>
+            <version>1.15</version>
         </dependency>
     </dependencies>
     

@@ -2,14 +2,18 @@
 <configuration>
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%16thread] %-5level %30logger{30} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%20thread] %-5level %30logger{30} - %msg%n</pattern>
         </encoder>
     </appender>
 
     <logger name="io.moquette.broker.metrics.MQTTMessageLogger" level="WARN"/>
     <logger name="io.moquette.broker.PostOffice" level="INFO"/>
-    <logger name="io.moquette.broker.MQTTConnection" level="WARN"/>
+    <logger name="io.moquette.broker.MQTTConnection" level="INFO"/>
     <logger name="io.moquette.broker.NewNettyMQTTHandler" level="OFF"/>
+    <logger name="io.moquette.broker.SessionRegistry" level="debug"/>
+    <logger name="io.moquette.broker.unsafequeues.Queue" level="INFO"/>
+    <logger name="io.moquette.broker.unsafequeues.QueuePool" level="INFO"/>
+    <logger name="io.moquette.broker.unsafequeues.Segment" level="INFO"/>
 
     <root level="INFO">
         <appender-ref ref="STDOUT" />

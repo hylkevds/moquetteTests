@@ -1,7 +1,6 @@
 package tests.moquettetests;
 
 import io.moquette.BrokerConstants;
-import io.moquette.broker.PostOffice;
 import io.moquette.broker.Server;
 import io.moquette.broker.config.IConfig;
 import io.moquette.broker.config.MemoryConfig;
@@ -11,19 +10,15 @@ import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.TemporalAccessor;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,16 +51,18 @@ public class MoquetteTest {
     /**
      * Clients connect, subscript, listen for this long, then unsubscribe.
      */
-    public static final long CLIENT_LIVE_MILLIS = 12_000;
-    public static final long CLIENT_LIVE_MILLIS_INITIAL = 120_000_000;
+    public static final long CLIENT_LIVE_MILLIS = 30_000;
+    public static final long CLIENT_LIVE_MILLIS_INITIAL = 30_000;
     /**
      * After unsubscribing, clients sleep for this long, and start over.
      */
-    public static final long CLIENT_DOWN_MILLIS = 700;
+    public static final long CLIENT_DOWN_MILLIS = 10;
 
     public static final YES_NO_ALTERNATE CLIENT_CLEAN_SESSION = YES_NO_ALTERNATE.ALTERNATE;
 
     public static final boolean CLIENT_UNSUBSCRIBE_BEFORE_DISCONNECT = true;
+
+    public static final boolean CLIENT_RANDOMISE_IDS = true;
 
     /**
      * Publish directly using moquette internal API?
@@ -74,21 +71,21 @@ public class MoquetteTest {
     /**
      * Publish this many messages in one go.
      */
-    public static final long PUBLISHER_BATCH_COUNT = 1_000;
+    public static final long PUBLISHER_BATCH_COUNT = 500;
     /**
      * Slowly increase the publish batch count with this amount until
      * {@link #PUBLISHER_BATCH_COUNT} is reached.
      */
-    public static final long PUBLISHER_BATCH_COUNT_INCREMENT = 20;
+    public static final long PUBLISHER_BATCH_COUNT_INCREMENT = 50;
     /**
      * Then sleep for this long.
      */
-    public static final long PUBLISHER_SLEEP_MILLIS = 4_000;
+    public static final long PUBLISHER_SLEEP_MILLIS = 2_000;
 
     /**
      * How long to wait before the start the publishers.
      */
-    public static final long PUBLISHER_START_DELAY_MILLIS = 2_000;
+    public static final long PUBLISHER_START_DELAY_MILLIS = 5_000;
     /**
      * How long to wait before the start of the next publisher.
      */
@@ -97,13 +94,13 @@ public class MoquetteTest {
     private static final int WORKER_CHECK_INTERVAL = 1_000;
 
     public static final int MAX_IN_FLIGHT_LISTENERS = 9999;
-    public static final int MAX_IN_FLIGHT_PUBLISHERS = 10;
-    public static final long TOPIC_COUNT = 2;
+    public static final int MAX_IN_FLIGHT_PUBLISHERS = 40;
+    public static final long TOPIC_COUNT = 20;
     public static final int H2_AUTO_SAVE_INTERVAL = 1;
 
     private Server broker;
     private final int threadCountPublish = 2;
-    private final int threadCountListen = 100;
+    private final int threadCountListen = 20;
 
     /**
      * The number of milliseconds a worker is allowed to not work before we
@@ -182,7 +179,7 @@ public class MoquetteTest {
         }
     }
 
-    public void startWorkers() {
+    public void startPublishers() {
         sleep(PUBLISHER_START_DELAY_MILLIS);
         for (Publisher worker : publishers) {
             sleep(PUBLISHER_RAMP_UP_DELAY_MILLIS);
@@ -215,13 +212,13 @@ public class MoquetteTest {
                     if (worker.getLastMessage() < cutOff) {
                         failedCount++;
                         worker.setWorking(false);
-                        LOGGER.warn("Worker {} is not working. Now {} stopped.", worker.getTopic(), failedCount);
+                        LOGGER.warn("Publisher {} is not working. Now {} stopped.", worker.getTopic(), failedCount);
                     }
                 } else {
                     if (worker.getLastMessage() > cutOff) {
                         failedCount--;
                         worker.setWorking(true);
-                        LOGGER.warn("Worker {} seems to have resumed working. Now {} stopped.", worker.getTopic(), failedCount);
+                        LOGGER.warn("Publisher {} seems to have resumed working. Now {} stopped.", worker.getTopic(), failedCount);
                     }
                 }
             }
@@ -235,30 +232,27 @@ public class MoquetteTest {
         long diff = (long) (Math.floor(totalRecv + totalRecvOdd) - totalSent * threadCountListen);
         StringBuilder failCounts = new StringBuilder();
         StringBuilder sizeCounts = new StringBuilder();
-        for (int i = 0; i < PostOffice.QUEUE_FAILURES.length; i++) {
-            failCounts.append(" ").append(PostOffice.QUEUE_FAILURES[i].get());
-            sizeCounts.append(" ").append(PostOffice.SESSION_QUEUES[i].remainingCapacity());
-        }
+//        for (int i = 0; i < PostOffice.QUEUE_FAILURES.length; i++) {
+//            failCounts.append(" ").append(PostOffice.QUEUE_FAILURES[i].get());
+//            sizeCounts.append(" ").append(PostOffice.SESSION_QUEUES[i].remainingCapacity());
+//        }
         LOGGER.info("Sent/Received {} / {} + {} messages ({}) in {} batches. {} / {} ({}, {})",
                 totalSent, totalRecv, totalRecvOdd, diff, totalBatches,
-                sizeCounts, failCounts,
-                PostOffice.FAILED_PUBLISHES.packetsMap.size(), PostOffice.SUBSCRIPTIONS.size());
+                sizeCounts, failCounts, 0, 0);
+        //PostOffice.FAILED_PUBLISHES.packetsMap.size(), PostOffice.SUBSCRIPTIONS.size());
     }
 
-    public void startServer() {
+    public void startServer() throws IOException {
         broker = new Server();
 
         IConfig config = new MemoryConfig(new Properties());
         config.setProperty(BrokerConstants.ALLOW_ANONYMOUS_PROPERTY_NAME, Boolean.TRUE.toString());
         config.setProperty(BrokerConstants.IMMEDIATE_BUFFER_FLUSH_PROPERTY_NAME, Boolean.TRUE.toString());
         config.setProperty(BrokerConstants.NETTY_MAX_BYTES_PROPERTY_NAME, "200000");
-        final Path storePath = Paths.get(BrokerConstants.DEFAULT_MOQUETTE_STORE_H2_DB_FILENAME);
-        if (storePath.toFile().exists()) {
-            storePath.toFile().delete();
-        }
-        String defaultPersistentStore = storePath.toString();
-        //config.setProperty(BrokerConstants.PERSISTENT_STORE_PROPERTY_NAME, defaultPersistentStore);
-        config.setProperty(BrokerConstants.AUTOSAVE_INTERVAL_PROPERTY_NAME, Integer.toString(H2_AUTO_SAVE_INTERVAL));
+        config.setProperty(BrokerConstants.SESSION_QUEUE_SIZE, "1024");
+        config.setProperty(BrokerConstants.PERSISTENT_QUEUE_TYPE_PROPERTY_NAME, "segmented");
+        final Path tempDir = Files.createTempDirectory("moquette");
+        config.setProperty(BrokerConstants.DATA_PATH_PROPERTY_NAME, tempDir.resolve("moquette").toFile().getAbsolutePath());
 
         try {
             broker.startServer(config);
@@ -285,7 +279,7 @@ public class MoquetteTest {
         createPublisers();
         createListeners();
         startListeners();
-        startWorkers();
+        startPublishers();
 
         try (BufferedReader input = new BufferedReader(new InputStreamReader(System.in, "UTF-8"))) {
             LOGGER.warn("Press Enter to stop publishers.");
@@ -300,9 +294,6 @@ public class MoquetteTest {
 
             LOGGER.warn("Press Enter to exit.");
             input.read();
-            for (Map.Entry<String, AtomicLong> entry : PostOffice.QUEUE_ADD_THREADS.entrySet()) {
-                LOGGER.info("{} : {}", entry.getValue().get(), entry.getKey());
-            }
             LOGGER.warn("Stopping Server...");
             stopServer();
         }

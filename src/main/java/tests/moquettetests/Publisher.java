@@ -1,9 +1,9 @@
 package tests.moquettetests;
 
-import com.hivemq.client.mqtt.MqttClientBuilder;
 import com.hivemq.client.mqtt.datatypes.MqttQos;
-import com.hivemq.client.mqtt.mqtt3.Mqtt3BlockingClient;
+import com.hivemq.client.mqtt.mqtt3.Mqtt3AsyncClient;
 import com.hivemq.client.mqtt.mqtt3.Mqtt3Client;
+import io.moquette.broker.RoutingResults;
 import io.moquette.broker.Server;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
@@ -15,7 +15,7 @@ import io.netty.handler.codec.mqtt.MqttPublishVariableHeader;
 import io.netty.handler.codec.mqtt.MqttQoS;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
@@ -42,7 +42,7 @@ class Publisher implements Runnable {
     private boolean stop = false;
     private final String clientId;
     private final MqttClient clientPaho;
-    private final Mqtt3BlockingClient clientHiveMq;
+    private final Mqtt3AsyncClient clientHiveMq;
     private final Server broker;
     private final String topic;
     private long batchCountCurrent = PUBLISHER_BATCH_COUNT_INCREMENT;
@@ -67,7 +67,7 @@ class Publisher implements Runnable {
                     .addDisconnectedListener((context) -> {
                         LOGGER.info("connectionLost");
                     })
-                    .buildBlocking();
+                    .buildAsync();
             this.clientPaho = null;
         } else {
             this.clientHiveMq = null;
@@ -92,7 +92,11 @@ class Publisher implements Runnable {
         while (!stop) {
             String message = "Last: " + lastMessage + MoquetteTest.MESSAGE;
             if (clientHiveMq != null) {
-                publishHiveMq(message);
+                try {
+                    publishHiveMq(message);
+                } catch (IllegalArgumentException | InterruptedException | ExecutionException ex) {
+                    LOGGER.error("Failed to publish", ex);
+                }
             }
             if (clientPaho != null) {
                 publishPaho(message);
@@ -118,7 +122,10 @@ class Publisher implements Runnable {
             MqttFixedHeader fixedHeader = new MqttFixedHeader(MqttMessageType.PUBLISH, false, MqttQoS.valueOf(MoquetteTest.QOS_PUBLISH), false, 0);
             MqttPublishVariableHeader varHeader = new MqttPublishVariableHeader(topic, 0);
             MqttPublishMessage mqttPublishMessage = new MqttPublishMessage(fixedHeader, varHeader, payload);
-            broker.internalPublish(mqttPublishMessage, clientId);
+            RoutingResults internalPublish = broker.internalPublish(mqttPublishMessage, clientId);
+            if (!internalPublish.isAllSuccess()) {
+                LOGGER.error("Partial failed publish.");
+            }
             sentCount.incrementAndGet();
             lastMessage = System.currentTimeMillis();
         }
@@ -129,11 +136,12 @@ class Publisher implements Runnable {
         }
     }
 
-    private void publishHiveMq(String message) throws IllegalArgumentException {
+    private void publishHiveMq(String message) throws IllegalArgumentException, InterruptedException, ExecutionException {
         if (!clientHiveMq.getState().isConnected()) {
             clientHiveMq.connectWith()
                     .cleanSession(true)
-                    .send();
+                    .send()
+                    .get();
         }
         for (int i = 0; i < batchCountCurrent && !stop; i++) {
             if (clientHiveMq.getState().isConnected()) {
@@ -141,7 +149,7 @@ class Publisher implements Runnable {
                         .topic(topic)
                         .payload(message.getBytes(MoquetteTest.UTF8))
                         .qos(MqttQos.fromCode(MoquetteTest.QOS_PUBLISH))
-                        .send();
+                        .send().get();
                 sentCount.incrementAndGet();
             } else {
                 LOGGER.info("Publisher {} lost connection: {}", clientId, topic);
@@ -163,6 +171,7 @@ class Publisher implements Runnable {
                 connOpts.setKeepAliveInterval(30);
                 connOpts.setConnectionTimeout(30);
                 connOpts.setMaxInflight(MoquetteTest.MAX_IN_FLIGHT_PUBLISHERS);
+                clientPaho.setTimeToWait(500);
                 clientPaho.connect(connOpts);
             }
             for (int i = 0; i < batchCountCurrent && !stop; i++) {

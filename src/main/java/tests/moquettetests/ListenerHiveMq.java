@@ -33,7 +33,7 @@ class ListenerHiveMq implements Listener {
     private final AtomicLong recvUnwantedCount = new AtomicLong();
     private boolean stop = false;
     private Thread current;
-    private boolean lastWasClean = false;
+    private boolean lastWasClean = true;
     private long nextSleep = MoquetteTest.CLIENT_LIVE_MILLIS_INITIAL;
 
     public ListenerHiveMq(String serverString, String clientId, String[] topics) throws URISyntaxException {
@@ -92,7 +92,7 @@ class ListenerHiveMq implements Listener {
     @Override
     public void run() {
         current = Thread.currentThread();
-        LOGGER.info("Listening on {} topics", topics.length);
+        LOGGER.info("Client {} Listening on {} topics", clientId, topics.length);
         while (!stop) {
             final boolean shouldCleanSession = shouldCleanSession();
             client.publishes(MqttGlobalPublishFilter.UNSOLICITED, t -> recvUnwantedCount.incrementAndGet());
