@@ -11,7 +11,7 @@
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <mainClass>tests.moquettetests.MoquetteTest</mainClass>
-        <logback.version>1.2.10</logback.version>
+        <logback.version>1.3.12</logback.version>
         <moquette-broker.version>0.17-SNAPSHOT</moquette-broker.version>
         <paho.version>1.2.5</paho.version>
         <!-- paho.version>1.2.5</paho.version -->
