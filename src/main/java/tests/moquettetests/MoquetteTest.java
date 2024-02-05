@@ -246,13 +246,14 @@ public class MoquetteTest {
         broker = new Server();
 
         IConfig config = new MemoryConfig(new Properties());
-        config.setProperty(BrokerConstants.ALLOW_ANONYMOUS_PROPERTY_NAME, Boolean.TRUE.toString());
-        config.setProperty(BrokerConstants.IMMEDIATE_BUFFER_FLUSH_PROPERTY_NAME, Boolean.TRUE.toString());
-        config.setProperty(BrokerConstants.NETTY_MAX_BYTES_PROPERTY_NAME, "200000");
-        config.setProperty(BrokerConstants.SESSION_QUEUE_SIZE, "1024");
-        config.setProperty(BrokerConstants.PERSISTENT_QUEUE_TYPE_PROPERTY_NAME, "segmented");
+        config.setProperty(IConfig.ALLOW_ANONYMOUS_PROPERTY_NAME, Boolean.TRUE.toString());
+        config.setProperty(IConfig.BUFFER_FLUSH_MS_PROPERTY_NAME, "0");
+        config.setProperty(IConfig.NETTY_MAX_BYTES_PROPERTY_NAME, "200000");
+        config.setProperty(IConfig.SESSION_QUEUE_SIZE, "1024");
+        config.setProperty(IConfig.PERSISTENT_QUEUE_TYPE_PROPERTY_NAME, "segmented");
+        config.setProperty(IConfig.PERSISTENT_CLIENT_EXPIRATION_PROPERTY_NAME, "30s");
         final Path tempDir = Files.createTempDirectory("moquette");
-        config.setProperty(BrokerConstants.DATA_PATH_PROPERTY_NAME, tempDir.resolve("moquette").toFile().getAbsolutePath());
+        config.setProperty(IConfig.DATA_PATH_PROPERTY_NAME, tempDir.resolve("moquette").toFile().getAbsolutePath());
 
         try {
             broker.startServer(config);
